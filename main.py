@@ -11,12 +11,12 @@ import tty
 
 
 import json
-import ast
 
 from screenshot import take_fullscreen_screenshot, take_screenshot2
 from ocr import ocr
 from ai import generate
 from mouseclick import click_bbox
+from exp.resp_to_cb import copy_to_clipboard
 
 """Listen for global keyboard events and react to the `p` key.
 
@@ -41,7 +41,7 @@ def bbox_for_contains(ocr_results, needle: str, strict: bool = False):
                 print("Combined text:", combined, flush=True)
                 if n in combined:
                         print("Found in combined text", flush=True)
-                        return ocr_results[idx+2]['bbox']
+                        return ocr_results[idx+3]['bbox']
                 ###############################
         if n in item["text"].lower():
             return item["bbox"]
@@ -53,7 +53,8 @@ def find_answer():
         ocr_results = ocr(image_path="./img/screenshot.png", mode="chunk", visualize=True, x_thresh=20, y_thresh=4)
         model_response = generate(image_path="./img/screenshot.png", prompt="")
         model_response = json.loads(model_response)
-        model_response["Correct option"] = ast.literal_eval(model_response["Correct option"])
+        print("Model response:", model_response, flush=True)
+        print(type(model_response), flush=True)
         for i in model_response["Correct option"]:
                 bbox = bbox_for_contains(ocr_results, i)
                 if bbox is None:
@@ -88,6 +89,16 @@ def find_answer():
         #         )
         #         return
 
+def ans_cp():
+        take_screenshot2(directory="img")
+        print("screenshot taken", flush=True)
+        model_response = generate(image_path="./img/screenshot.png", prompt="Give answer to given question with details. Respond in JSON format like {\"Correct option\": \"<answer>\"}")
+        model_response = json.loadso(model_response)
+        print("Model response:", model_response, flush=True)
+        for i in model_response["Correct option"]:
+                copy_to_clipboard(i)
+        print("\n\nFull response copied to clipboard:\n")
+        
 def _by_id_keyboard_event_paths() -> list[str]:
         paths: list[str] = []
         for link in sorted(glob.glob("/dev/input/by-id/*kbd*")):
@@ -201,6 +212,9 @@ def listen_terminal(*, debug: bool = False) -> int:
                         if ch in ("p", "P"):
                                 find_answer()
                                 print("p is pressed", flush=True)
+                        if ch in ("o", "O"):
+                                ans_cp()
+                                print(f"{ch} is pressed", flush=True)
         except KeyboardInterrupt:
                 return 0
         finally:
@@ -232,6 +246,9 @@ def listen_global(device: str | None) -> int:
                         if event.type == ecodes.EV_KEY and event.value == 1 and event.code == ecodes.KEY_P:
                                 print("p is pressed", flush=True)
                                 find_answer()
+                        if event.type == ecodes.EV_KEY and event.value == 1 and event.code == ecodes.KEY_O:
+                                print("o is pressed", flush=True)
+                                ans_cp()
         except KeyboardInterrupt:
                 pass
 

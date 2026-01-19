@@ -1,100 +1,47 @@
 import argparse
-import json
+import importlib
 import os
 import sys
 import time
+from pathlib import Path
 
 import dotenv
-from variables import sys_instruction
 
-dotenv.load_dotenv()
-
-from google import genai
-from google.genai import types
+dotenv.load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
 
+def _load_model_module(model_name: str):
+    if not model_name:
+        raise ValueError("model_name must be a non-empty string")
+
+    # Convention: ai_models/<model_name>.py exports generate(prompt, image_path, **kwargs)
+    module_name = f"ai_models.{model_name}"
+    try:
+        return importlib.import_module(module_name)
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError(
+            f"AI model module '{module_name}' not found. "
+            f"Set AI_MODEL to a valid module name in ./ai_models (e.g. 'gemini_3')."
+        ) from exc
 
 
-def generate(prompt: str = None, 
-             image_path: str | None = None) -> None:
-    
-    parts = []
-    print("Generating response...", flush=True)
-    if image_path:
-        parts.append(types.Part.from_bytes(
-        data=open(image_path, "rb").read(),
-        mime_type="image/png",
-    ))
+def generate(
+    prompt: str | None = None,
+    image_path: str | None = None,
+    model: str | None = None,
+    **kwargs,
+) -> str:
+    model_name = model or os.environ.get("AI_MODEL", "gemini_3")
+    model_module = _load_model_module(model_name)
 
-    if prompt:
-        parts.append(types.Part.from_text(text=prompt))
-        
-        
-    client = genai.Client(
-        api_key=os.environ.get("GEMINI_API_KEY"),
-    )
-
-    model = "gemini-3-flash-preview"
-    contents = [
-        types.Content(
-            role="user",
-            parts=parts,
-        ),
-    ]
-    tools = [
-        types.Tool(googleSearch=types.GoogleSearch(
-        )),
-    ]
-    generate_content_config = types.GenerateContentConfig(
-        temperature=0.75,
-        thinking_config=types.ThinkingConfig(
-            thinking_level="MEDIUM",
-        ),
-        safety_settings=[
-            types.SafetySetting(
-                category="HARM_CATEGORY_HARASSMENT",
-                threshold="BLOCK_NONE",  # Block none
-            ),
-            types.SafetySetting(
-                category="HARM_CATEGORY_HATE_SPEECH",
-                threshold="BLOCK_NONE",  # Block none
-            ),
-            types.SafetySetting(
-                category="HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                threshold="BLOCK_NONE",  # Block none
-            ),
-            types.SafetySetting(
-                category="HARM_CATEGORY_DANGEROUS_CONTENT",
-                threshold="BLOCK_NONE",  # Block none
-            ),
-        ],
-        tools=tools,
-        response_mime_type="application/json",
-        response_schema=genai.types.Schema(
-            type = genai.types.Type.OBJECT,
-            properties = {
-                "Correct option": genai.types.Schema(
-                    type = genai.types.Type.STRING,
-                ),
-            },
-        ),
-        system_instruction=[
-            types.Part.from_text(text=sys_instruction),
-        ],
-    )
-
-    full_response = ""
-    
-    for chunk in client.models.generate_content_stream(
-        model=model,
-        contents=contents,
-        config=generate_content_config,
-    ):
-        # print(chunk.text or "", end="", flush=True)
-        print(f"\033[32m{chunk.text or ''}\033[0m", end="", flush=True)
-        full_response += chunk.text or ""
-    
-    return full_response
+    model_generate = getattr(model_module, "generate", None)
+    if not callable(model_generate):
+        raise AttributeError(
+            f"AI model module 'ai_models.{model_name}' must define a callable 'generate' function"
+        )
+    grounding= False if model_name == "gemini_2" else True
+    print(f"using google search: {grounding}", flush=True)
+    return model_generate(prompt=prompt, image_path=image_path, enable_google_search=grounding, **kwargs)
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -7,6 +7,8 @@ from PIL import Image, ImageDraw
 def ocr(
     image_path: str = "./img/screenshot.png",
     *,
+    crop_bbox: tuple[int, int, int, int] | None = None,
+    crop_clamp: bool = True,
     mode: str = "chunk",  # "line" or "chunk"
     visualize: bool = False,
     visualize_path: str = "./img/ocr_bboxes.png",
@@ -25,7 +27,29 @@ def ocr(
             "group_id": 1
         }
     """
-    image = Image.open(image_path)
+    original_image = Image.open(image_path)
+
+    offset_x = 0
+    offset_y = 0
+    image = original_image
+    if crop_bbox is not None:
+        x, y, w, h = crop_bbox
+        left, top, right, bottom = x, y, x + w, y + h
+
+        if crop_clamp:
+            img_w, img_h = original_image.size
+            left = max(0, min(left, img_w))
+            right = max(0, min(right, img_w))
+            top = max(0, min(top, img_h))
+            bottom = max(0, min(bottom, img_h))
+
+        if right <= left or bottom <= top:
+            raise ValueError(f"Invalid crop_bbox after clamping: {crop_bbox!r}")
+
+        offset_x = left
+        offset_y = top
+        image = original_image.crop((left, top, right, bottom))
+
     data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
 
     results = []
@@ -51,7 +75,7 @@ def ocr(
             y = min([word[2] for word in words])
             w = max([word[1] + word[3] for word in words]) - x
             h = max([word[2] + word[4] for word in words]) - y
-            results.append({"text": full_text, "bbox": (x, y, w, h)})
+            results.append({"text": full_text, "bbox": (x + offset_x, y + offset_y, w, h)})
 
     # ---- CHUNK MODE ----
     elif mode == "chunk":
@@ -104,6 +128,10 @@ def ocr(
                         queue.append(other)
 
             results.append({"text": chunk_text, "bbox": (x1, y1, x2 - x1, y2 - y1)})
+        if offset_x or offset_y:
+            for r in results:
+                x, y, w, h = r["bbox"]
+                r["bbox"] = (x + offset_x, y + offset_y, w, h)
 
     else:
         raise ValueError("mode must be 'line' or 'chunk'")
@@ -121,8 +149,12 @@ def ocr(
 
     # ---- Visualization ----
     if visualize:
-        annotated = image.convert("RGB").copy()
+        annotated = (original_image if (offset_x or offset_y) else image).convert("RGB").copy()
         draw = ImageDraw.Draw(annotated)
+        if offset_x or offset_y:
+            left, top = offset_x, offset_y
+            right, bottom = offset_x + image.size[0], offset_y + image.size[1]
+            draw.rectangle([left, top, right, bottom], outline="yellow", width=2)
         for r in results:
             x, y, w, h = r["bbox"]
             draw.rectangle([x, y, x + w, y + h], outline="lime", width=2)
